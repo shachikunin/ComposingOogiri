@@ -33,6 +33,9 @@ if "chatHistory" not in st.session_state:
 os.environ["OPENAI_API_KEY"] = st.secrets.GPT3ApiKey.api_key
 client = OpenAI()
 
+IMAGE_FILE = './image.jpg'
+DESCRIPTION_FILE = './description.txt'
+
 def generate_random_word(keyword):
       num = random.randrange(3) + 1
       completion = client.chat.completions.create(
@@ -84,7 +87,11 @@ def make_image(text):
 def main():
       #アプリ起動時の処理、二重にロードしたくない処理はここで行う
       if st.session_state.execInitProcess == False:
-            
+            if os.path.isfile(IMAGE_FILE):
+                  os.remove(IMAGE_FILE)
+            if os.path.isfile(DESCRIPTION_FILE):
+                  os.remove(DESCRIPTION_FILE)
+                  
             #初期化処理完了
             st.session_state.execInitProcess = True
       
@@ -125,19 +132,19 @@ def main():
                         completion, responseUrl = make_image(message)
                   
                   st.session_state.imageDescription = completion
-                  description = open("description.txt", "w", encoding = "utf-8")
+                  description = open(DESCRIPTION_FILE, "w", encoding = "utf-8")
                   description.write(completion)
                   description.close()
                         
                   # 画像を取得
                   response = requests.get(responseUrl)
                   # 画像をファイルに保存
-                  with open('image.jpg', 'wb') as f:
+                  with open(IMAGE_FILE, 'wb') as f:
                         f.write(response.content)
                         
-      if os.path.isfile('./image.jpg') and os.path.isfile('./description.txt'):
-            image = Image.open('image.jpg')
-            description = open("description.txt", "r", encoding = "utf-8")
+      if os.path.isfile(IMAGE_FILE) and os.path.isfile(DESCRIPTION_FILE):
+            image = Image.open(IMAGE_FILE)
+            description = open(DESCRIPTION_FILE, "r", encoding = "utf-8")
             st.session_state.imageDescription = description.read()
             st.image(image, caption="Description:" + st.session_state.imageDescription)
             description.close()
