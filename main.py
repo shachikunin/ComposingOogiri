@@ -180,36 +180,37 @@ def main():
             # 実行ボタン
             if st.button('コード進行作成'):
                   if uploaded_file is not None:
-                        # 画像を一時的なファイルに保存
-                        with open(IMAGE_FILE, "wb") as f:
-                              f.write(uploaded_file.getbuffer())
+                        with st.spinner('画像解析中...'):
+                              # 画像を一時的なファイルに保存
+                              with open(IMAGE_FILE, "wb") as f:
+                                    f.write(uploaded_file.getbuffer())
 
-                        base64_image = encode_image(IMAGE_FILE)
-                        if st.session_state.chordLevel != "ダイアトニックコード(初心者向け)":
-                              for option in st.session_state.chordOption:
-                                    st.session_state.chordInfo = st.session_state.chordInfo + "、" + option
-                        
-                        prompt = f"この画像のイメージに合った曲を作りたいです。そのような曲のコード進行を、「{st.session_state.chordInfo}」の要素を必要に応じて取り入れて提案してください。ただし、コード進行のキーは{st.session_state.key}とし、出力は提案したコード進行のみとしてください。"
-                        
-                        # OpenAI APIを使用して画像の説明を取得
-                        response = client.chat.completions.create(
-                              model="gpt-4-vision-preview",
-                              messages=[
-                                    {
-                                          "role": "user",
-                                          "content": [
-                                                {"type": "text", "text": prompt},
-                                                {
-                                                      "type": "image_url",
-                                                      "image_url": {
-                                                            "url": f"data:image/jpeg;base64,{base64_image}",
-                                                            },
-                                                },
-                                          ],
-                                    }
-                              ],
-                              max_tokens=1000,
-                        )
+                              base64_image = encode_image(IMAGE_FILE)
+                              if st.session_state.chordLevel != "ダイアトニックコード(初心者向け)":
+                                    for option in st.session_state.chordOption:
+                                          st.session_state.chordInfo = st.session_state.chordInfo + "、" + option
+                              
+                              prompt = f"この画像のイメージに合った曲を作りたいです。そのような曲のコード進行を、「{st.session_state.chordInfo}」の要素を必要に応じて取り入れて提案してください。ただし、コード進行のキーは{st.session_state.key}とし、出力は提案したコード進行のみとしてください。"
+                              
+                              # OpenAI APIを使用して画像の説明を取得
+                              response = client.chat.completions.create(
+                                    model="gpt-4-vision-preview",
+                                    messages=[
+                                          {
+                                                "role": "user",
+                                                "content": [
+                                                      {"type": "text", "text": prompt},
+                                                      {
+                                                            "type": "image_url",
+                                                            "image_url": {
+                                                                  "url": f"data:image/jpeg;base64,{base64_image}",
+                                                                  },
+                                                      },
+                                                ],
+                                          }
+                                    ],
+                                    max_tokens=1000,
+                              )
                         # 結果の表示
                         st.success(response.choices[0].message.content, icon="🎹")
                         print(response.choices[0].message.content)
