@@ -238,6 +238,7 @@ def main():
       if st.session_state.execInitProcess == False:
             # streamlitの環境がわからないので、一旦Windows以外にする
             if os.name != "nt":
+		    os.mkdir("/home/appuser/.fluidsynth")
 	            shutil.copy("/usr/share/sounds/sf2/FluidR3_GM.sf2", "/home/appuser/.fluidsynth/default_sound_font.sf2")
             if os.path.isfile(IMAGE_FILE):
                   os.remove(IMAGE_FILE)
