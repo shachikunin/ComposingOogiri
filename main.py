@@ -2,6 +2,7 @@ import streamlit as st
 import base64
 import time
 import os
+import shutil
 import re
 import numpy as np
 import urllib.request,urllib.parse
@@ -42,6 +43,7 @@ os.environ["OPENAI_API_KEY"] = st.secrets.GPT3ApiKey.api_key
 client = OpenAI()
 
 IMAGE_FILE = './image.jpg'
+IMAGE_TMP_FILE = './image_tmp.jpg'
 DESCRIPTION_FILE = './description.txt'
 MIDI_FILE = './chord.mid'
 CHORD_AUDIO = './chord.wav'
@@ -359,13 +361,16 @@ def main():
 
             # 実行ボタン
             if st.button('コード進行作成', disabled = (loadImage == "NoImage")):
-                  if uploaded_file is not None:
+                  if loadImage != "NoImage":
                         with st.spinner('画像解析中...'):
                               # 画像を一時的なファイルに保存
-                              with open(IMAGE_FILE, "wb") as f:
-                                    f.write(uploaded_file.getbuffer())
+                              if loadImage == uploaded_file:
+                                    with open(IMAGE_TMP_FILE, "wb") as f:
+                                          f.write(uploaded_file.getbuffer())
+                              elif loadImage == IMAGE_FILE:
+                                    shutil.copy(IMAGE_FILE, IMAGE_TMP_FILE)
 
-                              base64_image = encode_image(IMAGE_FILE)
+                              base64_image = encode_image(IMAGE_TMP_FILE)
                               if st.session_state.chordLevel != "ダイアトニックコード(初心者向け)":
                                     for option in st.session_state.chordOption:
                                           st.session_state.chordInfo = st.session_state.chordInfo + "、" + option
