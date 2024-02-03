@@ -254,6 +254,7 @@ def main():
       mode = st.radio("モード選択", [":rainbow[画像生成]", ":rainbow[コード進行提案]"], captions = ["曲のイメージから画像を作るならこちら", "画像から曲のイメージに合うコード進行を提案してもらうならこちら"])
       
       if mode == ":rainbow[画像生成]":
+            st.session_state.chordProgression = ""
             st.sidebar.title("曲のイメージ")
             st.session_state.who = st.sidebar.text_input("Who(例：白熊)", key = "textBoxWho")
             st.session_state.disableRandomInputWho = st.sidebar.checkbox("Whoをランダム入力しない")
