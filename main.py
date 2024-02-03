@@ -12,8 +12,10 @@ from PIL import Image
 import io
 import random
 import base64
+from mido import Message, MidiFile, MidiTrack, bpm2tempo, MetaMessage
+from midi2audio import FluidSynth
 
-if "chatHistory" not in st.session_state:
+if "execInitProcess" not in st.session_state:
       st.session_state.execInitProcess = False
       st.session_state.who = ""
       st.session_state.what = ""
@@ -34,15 +36,148 @@ if "chatHistory" not in st.session_state:
       st.session_state.chordLevel = ""
       st.session_state.chordInfo = ""
       st.session_state.chordOption = []
+      st.session_state.chordProgression = ""
 
 os.environ["OPENAI_API_KEY"] = st.secrets.GPT3ApiKey.api_key
 client = OpenAI()
 
 IMAGE_FILE = './image.jpg'
 DESCRIPTION_FILE = './description.txt'
+MIDI_FILE = './chord.mid'
+CHORD_AUDIO = './chord.wav'
 
 MODE_GENERATE_PICTURE = 0
 MODE_SUGGEST_CHORD = 1
+
+# 基本のMIDIノート番号 (C4の場合は60)
+note_map = {
+      "C": 60, "C#": 61, "Db": 61, "D": 62, "D#": 63, "Eb": 63, 
+      "E": 64, "F": 65, "F#": 66, "Gb": 66, "G": 67, "G#": 68, "Ab": 68, 
+      "A": 69, "A#": 70, "Bb": 70, "B": 71
+}
+
+# コードタイプに応じたオフセットのパターン
+chord_types = {
+      "": [0, 4, 7],  # メジャーコード
+      "m": [0, 3, 7],  # マイナーコード
+      "7": [0, 4, 7, 10],  # ドミナントセブンスコード
+      "maj7": [0, 4, 7, 11],  # メジャーセブンスコード
+      "m7": [0, 3, 7, 10],  # マイナーセブンスコード
+      "sus4": [0, 5, 7],  # サスフォー
+      "7sus4": [0, 5, 7],  # サスフォー
+      "sus2": [0, 2, 7],  # サスツー
+      "add9": [0, 4, 7, 14],  # アドナイン
+      "aug": [0, 4, 8],  # オーギュメント
+      "aug7": [0, 4, 8, 10],  # オーギュメントセブンス
+      "dim": [0, 3, 6],  # ディミニッシュ
+      "dim7": [0, 3, 6, 9],  # ディミニッシュセブンス
+      "m7b5": [0, 3, 6, 10],  # マイナーセブンスフラットファイブ
+      "6": [0, 4, 7, 9],  # メジャーシックス
+      "m6": [0, 3, 7, 9],  # マイナーシックス
+      "m9": [0, 3, 7, 10, 14],  # マイナー9コード
+      "9": [0, 4, 7, 10, 14],  # 9コード
+      "m11": [0, 3, 7, 10, 14, 17],  # マイナー11コード
+      "11": [0, 4, 7, 10, 14, 17],  # 11コード
+      "13": [0, 4, 7, 10, 14, 21],  # 13コード
+      "7b13": [0, 4, 7, 10, 20],  # 7b13コード
+}
+
+def get_chord_notes(chord):
+      notes = []  # 最終的なノートリスト
+      max_pitch = 75  # 最大の音高
+      bass_offset = 24  # ベースノートをコードノートより24MIDIノート（2オクターブ）下げる
+      #print("input:" + chord)
+
+      # オンコードまたは通常のコードの解析
+      if '/' in chord:
+            chord_part, bass_part = chord.split('/')
+      else:
+            chord_part = chord
+            bass_part = chord_part  # ルートノートをベースとして使用
+
+      # コード部分のノートを生成
+      chord_notes = generate_notes(chord_part)
+      # ベースノートの生成（ルートノートまたは指定されたベース）
+      bass_note = note_map.get(bass_part[0], 60)  # ベースノートが見つからない場合のデフォルト値
+      if len(bass_part) > 1 and bass_part[1] in ['#', 'b']:  # シャープやフラットの考慮
+            modifier = 1 if bass_part[1] == '#' else -1
+            bass_note += modifier
+
+      # ベースノートを2オクターブ下げてリストの最初に追加
+      bass_note -= bass_offset
+      notes = [bass_note] + chord_notes
+
+      return notes
+
+def generate_notes(chord):
+      # コードタイプを特定し、対応するノートを生成
+      for root_note in sorted(note_map.keys(), key=lambda x: -len(x)):  # 最長一致でキーを検出
+            if chord.startswith(root_note):
+                  chord_type = chord[len(root_note):]
+                  base_note = note_map[root_note]
+                  offsets = chord_types.get(chord_type, [])
+                  notes = [(base_note + offset) % 12 + base_note - base_note % 12 for offset in offsets]
+                  return notes
+      return []  # コードがマッピングに存在しない場合は空リストを返す
+
+def create_midi_from_progression(progression, output_path, bpm=120, note_length='half', velocity=64):
+      # 有効な文字セットを定義(対応コードを増やしたら、ここも増やす)
+      valid_chars = "ABCDEFGabcdefg#♭bmajmin7sus2sus4add9dimaug/-°+"
+      valid_strings = ['m', 'maj', 'min', 'dim', 'aug', '7', 'm7', 'maj7', 'dim7', 'm9', '9', 'm11', '11', '13', '7b13', '6', 'm6', 'sus2', 'sus4', 'add9', 'b5', '#5', 'b9', '#9', 'b11', '#11', 'b13', '#13', "/", "-"]
+      result = True
+      
+      mid = MidiFile()
+      track = MidiTrack()
+      mid.tracks.append(track)
+
+      # BPMを設定
+      track.append(MetaMessage('set_tempo', tempo=bpm2tempo(bpm), time=0))
+      
+      # 音の長さを設定（デフォルトは四分音符）
+      length_map = {
+            'whole': 4,
+            'half': 2,
+            'quarter': 1,
+            'eighth': 0.5,
+            'sixteenth': 0.25,
+      }
+      note_duration = int(480 * length_map.get(note_length, 1))  # MidiファイルのデフォルトTPQを使用
+      
+      # 改行コードを-、♭をbに、「 」を-に置き換え、全角文字を半角文字にする
+      progression = progression.replace('\n', '-')
+      progression = progression.replace('♭', 'b')
+      progression = progression.replace('(', '')
+      progression = progression.replace(')', '')
+      progression = progression.replace(' ','-')
+      progression = progression.translate(str.maketrans('ＡＢＣＤＥＦＧａｂｃｄｅｆｇ', 'ABCDEFGabcdefg'))
+      chords = progression.split('-')
+      # 空文字の要素を削除して、コードのみを含むリストを生成
+      chords = [chord for chord in chords if chord]
+      
+      # コード進行文字列の検証
+      for chord in chords:
+            # 有効な文字列のチェック
+            if not any(valid_string in chord for valid_string in valid_strings):
+                  # 有効な文字のみで構成されているかチェック
+                  if not all(char in valid_chars for char in chord):
+                        return False  # 有効でない文字が含まれている
+      
+      for chord in chords:
+            notes = get_chord_notes(chord)
+            notes.sort()
+            #print(notes)
+            # ノートオン
+            for note in notes:
+                  track.append(Message('note_on', note=note, velocity=velocity, time=0))
+            # ノートオフ
+            for note in notes:
+                  #int(note_duration*4/len(notes)は、ノートの数によって音の長さが変わるのを防いでいる
+                  track.append(Message('note_off', note=note, velocity=velocity, time=int(note_duration*4/len(notes))))
+      
+      # MIDIファイルの保存
+      mid.save(output_path)
+      
+      return result
 
 def generate_random_word(keyword):
       num = random.randrange(3) + 1
@@ -75,7 +210,7 @@ def fill_random_word():
             st.session_state["textBoxInfo"] = generate_random_word("楽曲のジャンル、絵の画風")
 
 def make_image(text):
-      print(text)
+      #print(text)
       start = time.time()  # 現在時刻（処理開始前）を取得
       response = client.images.generate(
             model="dall-e-3",
@@ -103,6 +238,13 @@ def main():
                   os.remove(IMAGE_FILE)
             if os.path.isfile(DESCRIPTION_FILE):
                   os.remove(DESCRIPTION_FILE)
+            if os.path.isfile(MIDI_FILE):
+                  os.remove(MIDI_FILE)
+            # コード進行確認用wavファイルは削除
+            files = os.listdir()
+            for file in files:
+                  if file.endswith(".wav"):
+                        os.remove(file)
                   
             #初期化処理完了
             st.session_state.execInitProcess = True
@@ -170,15 +312,52 @@ def main():
                   st.session_state.chordInfo = st.sidebar.selectbox("コード進行レベル詳細", ["トライアドのみ", "セブンスコードあり"])
             else:
                   st.session_state.chordInfo = "セブンスを含めたダイアトニックコード"
-                  st.session_state.chordOption= st.sidebar.multiselect("コード進行レベル詳細", ["sus", "aug", "dim", "add9", "テンションコード", "オルタードコード", "ブラックアダーコード", "部分転調", "オンコード", "ポリコード", "4度堆積コード", "クリシェ", "ペダルポイント"])
+                  st.session_state.chordOption= st.sidebar.multiselect("コード進行レベル詳細", ["sus4", "aug", "dim", "add9", "テンションコード", "オルタードコード", "ブラックアダーコード", "部分転調", "オンコード", "ポリコード", "クリシェ", "ペダルポイント"])
+            chordText = st.sidebar.text_input('コード進行作成でできたコード進行を入力すると、どんな音になるか確認できます')
+            selectBPM = st.sidebar.slider('コード進行のBPM', 60, 200, 120)
+            selectVelocity = st.sidebar.slider('ベロシティ（音量）', 0, 127, 100)
             
+            if st.sidebar.button("生成", key=1, disabled = chordText == ""):
+                  result = create_midi_from_progression(chordText, MIDI_FILE, bpm=selectBPM, note_length='eighth', velocity=selectVelocity)
+                  if result:
+                        #MIDI->audio
+                        fs = FluidSynth()
+                        fs.midi_to_audio(MIDI_FILE, CHORD_AUDIO)
+                  else:
+                        st.sidebar.error("使用できない文字があります。コードを表す文字かどうかご確認ください。")
+                  
+            if os.path.isfile(CHORD_AUDIO):
+                  audio_file = open(CHORD_AUDIO, 'rb')
+                  audio_bytes = audio_file.read()
+                  st.sidebar.audio(audio_bytes, format='audio/wav')
+            
+            if os.path.isfile(MIDI_FILE):
+                  with open(MIDI_FILE, "rb") as file:
+                              st.sidebar.download_button(
+                                    label="MIDIファイルをダウンロード",
+                                    data=file,
+                                    file_name=chordText + ".mid"
+                              )
+            
+            imageList = []
+            loadImage = "NoImage"
             uploaded_file = st.file_uploader("画像をアップロードしてください", type=["jpg"])
             if uploaded_file is not None:
-                  image = Image.open(uploaded_file)
+                  imageList.append("アップロードされた画像")
+            if os.path.isfile(IMAGE_FILE):
+                  imageList.append("画像生成モードで生成された画像")
+            
+            selectImage = st.selectbox("コード進行を提案してもらう画像", imageList)
+            if selectImage is not None:
+                  if selectImage == "アップロードされた画像":
+                        loadImage = uploaded_file
+                  elif selectImage == "画像生成モードで生成された画像":
+                        loadImage = IMAGE_FILE
+                  image = Image.open(loadImage)
                   st.image(image)
 
             # 実行ボタン
-            if st.button('コード進行作成'):
+            if st.button('コード進行作成', disabled = (loadImage == "NoImage")):
                   if uploaded_file is not None:
                         with st.spinner('画像解析中...'):
                               # 画像を一時的なファイルに保存
@@ -210,10 +389,14 @@ def main():
                                           }
                                     ],
                                     max_tokens=1000,
+                                    temperature = 0.6
                               )
-                        # 結果の表示
-                        st.success(response.choices[0].message.content, icon="🎹")
-                        print(response.choices[0].message.content)
+                        st.session_state.chordProgression = response.choices[0].message.content
+                        
+            if st.session_state.chordProgression != "":
+                  # 結果の表示
+                  st.success(st.session_state.chordProgression, icon="🎹")
+                  #print(response.choices[0].message.content)
 
 if __name__ == "__main__":
       main()
