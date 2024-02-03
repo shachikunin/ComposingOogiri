@@ -236,6 +236,9 @@ def encode_image(image_path):
 def main():
       #アプリ起動時の処理、二重にロードしたくない処理はここで行う
       if st.session_state.execInitProcess == False:
+            # streamlitの環境がわからないので、一旦Windows以外にする
+            if os.name != "nt":
+	            shutil.copy("/usr/share/sounds/sf2/FluidR3_GM.sf2", "/home/appuser/.fluidsynth/default_sound_font.sf2")
             if os.path.isfile(IMAGE_FILE):
                   os.remove(IMAGE_FILE)
             if os.path.isfile(DESCRIPTION_FILE):
